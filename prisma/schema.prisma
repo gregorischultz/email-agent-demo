@@ -1,6 +1,6 @@
 // Ficheiro: prisma/schema.prisma
-// Finalidade: Define o schema do banco de dados MySQL usando Prisma ORM.
-// Contém os modelos Email e Response usados pelo agente de email.
+// Define as tabelas da base de dados e os seus campos.
+// O ficheiro de dados de exemplo (seed) está em prisma/seed.ts e é configurado no package.json.
 
 generator client {
   provider = "prisma-client-js"

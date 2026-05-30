@@ -1,0 +1,59 @@
+// Ficheiro: prisma/schema.prisma
+// Finalidade: Define o schema do banco de dados MySQL usando Prisma ORM.
+// Contém os modelos Email e Response usados pelo agente de email.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  // URL de conexão com o banco MySQL. Definida em .env.local como DATABASE_URL.
+  url      = env("DATABASE_URL")
+}
+
+model Email {
+  // Identificador único do email (auto-incremento)
+  id         Int       @id @default(autoincrement())
+
+  // Endereço de email do remetente (ex: cliente@empresa.com)
+  from       String
+
+  // Assunto do email recebido
+  subject    String
+
+  // Corpo/conteúdo completo do email
+  body       String    @db.Text
+
+  // Data e hora em que o email foi recebido
+  receivedAt DateTime  @default(now())
+
+  // Categoria inferida pelo agente (ex: "suporte", "vendas", "spam")
+  category   String?
+
+  // Estado atual do email: "pendente", "respondido", "ignorado"
+  status     String    @default("pendente")
+
+  // Relação: um email pode ter uma ou mais respostas geradas
+  responses  Response[]
+}
+
+model Response {
+  // Identificador único da resposta (auto-incremento)
+  id        Int       @id @default(autoincrement())
+
+  // Referência ao email ao qual esta resposta pertence
+  emailId   Int
+
+  // Rascunho de resposta gerado pelo agente de IA
+  draft     String    @db.Text
+
+  // Indica se o utilizador aprovou a resposta para envio
+  approved  Boolean   @default(false)
+
+  // Data e hora em que a resposta foi efetivamente enviada (null se não enviada)
+  sentAt    DateTime?
+
+  // Relação com o modelo Email
+  email     Email     @relation(fields: [emailId], references: [id])
+}

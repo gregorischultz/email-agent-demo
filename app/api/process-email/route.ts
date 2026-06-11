@@ -1,27 +1,29 @@
 // Este ficheiro é a porta de entrada da IA na aplicação.
+// Usamos o Groq porque é completamente gratuito (sem cartão de crédito),
+// tem 14.400 pedidos por dia no free tier, e é extremamente rápido.
 // Quando o frontend envia um emailId, este ficheiro vai à base de dados buscar o email,
-// envia-o à Claude para análise, e guarda a categoria e o rascunho de resposta.
+// envia-o ao Groq para análise, e guarda a categoria e o rascunho de resposta.
 
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import Groq from "groq-sdk";
 import { prisma } from "@/lib/prisma";
 import type { ClaudeEmailAnalysis } from "@/lib/types";
 
-// Criamos o cliente da Anthropic uma única vez fora da função
+// Criamos o cliente do Groq uma única vez fora da função
 // para não o recriar a cada pedido que chega
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
 });
 
-// Instrução exacta que damos à Claude antes de lhe mostrar o email.
-// Definida aqui fora para ser fácil de alterar sem tocar na lógica.
+// Instrução exacta que damos ao modelo antes de lhe mostrar o email.
+// O Groq usa o mesmo formato de mensagens que o OpenAI — enviamos isto como "role: system".
 const SYSTEM_PROMPT = `Tu es un assistant pour une agence immobilière française.
 Analyse cet email et:
 1. Classe en: VISITE_REQUEST, PRICE_INQUIRY, COMPLAINT, INFO_REQUEST, OTHER
 2. Génère une réponse professionnelle en français (max 150 mots)
 3. Réponds UNIQUEMENT en JSON: {"category": "...", "response": "...", "urgency": "LOW|MEDIUM|HIGH"}`;
 
-// Categorias válidas que a Claude pode devolver — usamos isto para validar a resposta
+// Categorias válidas que o modelo pode devolver — usamos isto para validar a resposta
 const CATEGORIAS_VALIDAS = [
   "VISITE_REQUEST",
   "PRICE_INQUIRY",
@@ -33,15 +35,15 @@ const CATEGORIAS_VALIDAS = [
 // Níveis de urgência válidos
 const URGENCIAS_VALIDAS = ["LOW", "MEDIUM", "HIGH"] as const;
 
-// Função que verifica se a resposta da Claude tem o formato correcto
-// A Claude às vezes devolve texto extra antes ou depois do JSON — esta função protege-nos disso
-function validarRespostaClaude(texto: string): ClaudeEmailAnalysis {
+// Função que verifica se a resposta do modelo tem o formato correcto
+// O modelo às vezes devolve texto extra antes ou depois do JSON — esta função protege-nos disso
+function validarResposta(texto: string): ClaudeEmailAnalysis {
   // Tentamos encontrar um bloco JSON dentro do texto, mesmo que haja palavras à volta
   const correspondencia = texto.match(/\{[\s\S]*\}/);
   if (!correspondencia) {
-    // Isto pode acontecer se a Claude ignorar as instruções e responder em texto livre
+    // Isto pode acontecer se o modelo ignorar as instruções e responder em texto livre
     throw new Error(
-      "A Claude não devolveu JSON válido. Texto recebido: " + texto.slice(0, 200)
+      "O modelo não devolveu JSON válido. Texto recebido: " + texto.slice(0, 200)
     );
   }
 
@@ -51,7 +53,7 @@ function validarRespostaClaude(texto: string): ClaudeEmailAnalysis {
     dados = JSON.parse(correspondencia[0]);
   } catch {
     // Isto pode acontecer se o JSON estiver mal formado (ex: vírgula a mais)
-    throw new Error("O JSON devolvido pela Claude está mal formado.");
+    throw new Error("O JSON devolvido pelo modelo está mal formado.");
   }
 
   // Verificamos que o objecto tem exactamente os campos que esperamos
@@ -63,7 +65,7 @@ function validarRespostaClaude(texto: string): ClaudeEmailAnalysis {
     !("urgency" in dados)
   ) {
     throw new Error(
-      "O JSON da Claude não tem todos os campos obrigatórios (category, response, urgency)."
+      "O JSON não tem todos os campos obrigatórios (category, response, urgency)."
     );
   }
 
@@ -72,20 +74,20 @@ function validarRespostaClaude(texto: string): ClaudeEmailAnalysis {
   // Verificamos que a categoria é uma das opções válidas que definimos no system prompt
   if (!CATEGORIAS_VALIDAS.includes(obj.category as never)) {
     throw new Error(
-      `Categoria inválida devolvida pela Claude: "${obj.category}". Esperava uma de: ${CATEGORIAS_VALIDAS.join(", ")}`
+      `Categoria inválida: "${obj.category}". Esperava uma de: ${CATEGORIAS_VALIDAS.join(", ")}`
     );
   }
 
   // Verificamos que a urgência é uma das três opções válidas
   if (!URGENCIAS_VALIDAS.includes(obj.urgency as never)) {
     throw new Error(
-      `Urgência inválida devolvida pela Claude: "${obj.urgency}". Esperava LOW, MEDIUM ou HIGH.`
+      `Urgência inválida: "${obj.urgency}". Esperava LOW, MEDIUM ou HIGH.`
     );
   }
 
   // Verificamos que a resposta é texto e não está vazia
   if (typeof obj.response !== "string" || obj.response.trim() === "") {
-    throw new Error("A Claude devolveu uma resposta vazia.");
+    throw new Error("O modelo devolveu uma resposta vazia.");
   }
 
   // Tudo certo — devolvemos o objecto já com os tipos correctos
@@ -143,41 +145,48 @@ export async function POST(pedido: NextRequest) {
     );
   }
 
-  // --- PASSO 3: Enviar o email à Claude para análise ---
+  // --- PASSO 3: Enviar o email ao Groq para análise ---
   // Construímos a mensagem que vamos enviar — incluímos o assunto e o corpo do email
-  const mensagemParaClaude = `De: ${email.from}
+  const mensagemParaModelo = `De: ${email.from}
 Objet: ${email.subject}
 
 ${email.body}`;
 
   let analise: ClaudeEmailAnalysis;
   try {
-    const resposta = await anthropic.messages.create({
-      model: "claude-sonnet-4-5",    // Modelo escolhido por custo-eficiência
-      max_tokens: 512,               // 150 palavras de resposta + JSON cabe bem em 512 tokens
-      system: SYSTEM_PROMPT,         // As instruções que definem como a Claude deve agir
+    // O Groq usa o mesmo formato de mensagens que o OpenAI:
+    // "system" para as instruções do assistente, "user" para o conteúdo a analisar
+    const resposta = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile",  // Modelo gratuito, rápido e muito capaz
+      max_tokens: 512,                    // 150 palavras de resposta + JSON cabe bem em 512 tokens
+      temperature: 0.3,                   // Valor baixo = respostas mais consistentes e previsíveis
       messages: [
         {
+          role: "system",
+          content: SYSTEM_PROMPT,         // As instruções que definem como o modelo deve agir
+        },
+        {
           role: "user",
-          content: mensagemParaClaude,
+          content: mensagemParaModelo,    // O email que queremos analisar
         },
       ],
     });
 
-    // A Claude pode devolver vários blocos de conteúdo — pegamos apenas no texto
-    const blocoTexto = resposta.content.find((bloco) => bloco.type === "text");
-    if (!blocoTexto || blocoTexto.type !== "text") {
-      throw new Error("A Claude não devolveu nenhum bloco de texto.");
+    // Extraímos o texto da primeira (e única) resposta do modelo
+    const textoResposta = resposta.choices[0]?.message?.content;
+
+    if (!textoResposta || textoResposta.trim() === "") {
+      throw new Error("O modelo devolveu uma resposta vazia.");
     }
 
     // Validamos e convertemos a resposta para o formato que esperamos
-    analise = validarRespostaClaude(blocoTexto.text);
+    analise = validarResposta(textoResposta);
   } catch (erro) {
-    // Isto pode acontecer se: a ANTHROPIC_API_KEY está errada, sem créditos,
-    // a rede falhou, ou a Claude devolveu uma resposta inesperada
+    // Isto pode acontecer se: a GROQ_API_KEY está errada, quota esgotada,
+    // a rede falhou, ou o modelo devolveu uma resposta inesperada
     const mensagem = erro instanceof Error ? erro.message : "Erro desconhecido";
     return NextResponse.json(
-      { erro: "Falha na chamada à Claude API: " + mensagem },
+      { erro: "Falha na chamada à Groq API: " + mensagem },
       { status: 500 }
     );
   }
@@ -186,7 +195,7 @@ ${email.body}`;
   // Fazemos as duas escritas ao mesmo tempo com uma transacção — assim ou correm as duas ou nenhuma
   try {
     const [emailAtualizado, resposta] = await prisma.$transaction([
-      // Actualizar a categoria do email com o que a Claude decidiu
+      // Actualizar a categoria do email com o que o modelo decidiu
       prisma.email.update({
         where: { id: emailId },
         data: {
@@ -195,13 +204,13 @@ ${email.body}`;
         },
       }),
 
-      // Criar um novo registo de resposta com o rascunho gerado pela Claude
+      // Criar um novo registo de resposta com o rascunho gerado pelo modelo
       prisma.response.create({
         data: {
-          emailId: emailId,
-          draft: analise.response,
-          approved: false,   // O utilizador ainda não aprovou — começa sempre como false
-          sentAt: null,      // Ainda não foi enviado
+          emailId:  emailId,
+          draft:    analise.response,
+          approved: false,  // O utilizador ainda não aprovou — começa sempre como false
+          sentAt:   null,   // Ainda não foi enviado
         },
       }),
     ]);
@@ -211,15 +220,15 @@ ${email.body}`;
     return NextResponse.json({
       sucesso: true,
       email: {
-        id: emailAtualizado.id,
-        from: emailAtualizado.from,
-        subject: emailAtualizado.subject,
+        id:       emailAtualizado.id,
+        from:     emailAtualizado.from,
+        subject:  emailAtualizado.subject,
         category: emailAtualizado.category,
-        status: emailAtualizado.status,
+        status:   emailAtualizado.status,
       },
       resposta: {
-        id: resposta.id,
-        draft: resposta.draft,
+        id:       resposta.id,
+        draft:    resposta.draft,
         approved: resposta.approved,
       },
       urgency: analise.urgency,

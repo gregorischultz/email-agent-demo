@@ -1,10 +1,8 @@
-// Ficheiro: next.config.ts
+// Ficheiro: next.config.mjs
 // Finalidade: Configuração do Next.js para o projeto email-agent-demo.
 
-import type { NextConfig } from "next";
-
-// Configuração principal do Next.js
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   // Adicionar configurações adicionais aqui conforme necessário
 };
 

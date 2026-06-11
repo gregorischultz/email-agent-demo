@@ -42,3 +42,40 @@ export interface ResponseItem {
   approved: boolean;
   sentAt: Date | null;
 }
+
+// Versão do email com datas em texto — necessário para passar dados do Server para Client Components
+// (o React não consegue passar objectos Date directamente entre servidor e cliente)
+export interface EmailSerializado {
+  id: number;
+  from: string;
+  subject: string;
+  body: string;
+  receivedAt: string; // ISO string em vez de Date
+  category: EmailCategory | null;
+  status: EmailStatus;
+}
+
+// O que a API /api/process-email devolve quando corre com sucesso
+export interface RespostaProcessEmail {
+  sucesso: boolean;
+  email: {
+    id: number;
+    category: string;
+    status: string;
+  };
+  resposta: {
+    id: number;
+    draft: string;
+    approved: boolean;
+  };
+  urgency: Urgency;
+}
+
+// Dados que a modal precisa para mostrar o rascunho ao utilizador
+export interface DadosModal {
+  responseId: number;
+  emailId: number;
+  draft: string;
+  urgency: Urgency;
+  category: EmailCategory;
+}

@@ -6,9 +6,9 @@ import Link from "next/link";
 
 // Lista de itens de navegação da sidebar
 const navItems = [
-  { href: "/", label: "Dashboard" },
-  { href: "/emails", label: "Emails" },
-  { href: "/responses", label: "Respostas" },
+  { href: "/",        label: "Dashboard" },
+  { href: "/emails",  label: "Emails" },
+  { href: "/stats",   label: "Estatísticas" },
   { href: "/settings", label: "Configurações" },
 ];
 
@@ -19,7 +19,7 @@ export default function Sidebar() {
       {/* Cabeçalho da sidebar com o nome da aplicação */}
       <div className="p-6 border-b border-gray-700">
         <h1 className="text-xl font-bold text-white">Email Agent</h1>
-        <p className="text-xs text-gray-400 mt-1">Powered by Claude AI</p>
+        <p className="text-xs text-gray-400 mt-1">Powered by Groq AI</p>
       </div>
 
       {/* Links de navegação */}
